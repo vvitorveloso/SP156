@@ -1,0 +1,147 @@
+---
+title: "Analise de duplicidade dos dados SP156"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+  
+```{r library}
+
+#remotes::install_github("omegahat/RTidyHTML")
+
+library(tidyverse)
+library(sf)
+library(viridis)
+library(RCurl)
+library(RTidyHTML)
+library(XML)
+```
+
+```{r pega diretorio local}
+script_dir = dirname(rstudioapi::getActiveDocumentContext()$path)
+#cria o diretorio para output
+# if (!dir.exists(paste0(script_dir,"/","DUPLICIDADES"))) {dir.create(paste0(script_dir,"/","DUPLICIDADES"))}
+```
+
+
+```{r set target data}
+semestre = "2"
+ano = "2019"
+```
+
+```{r download targets}
+links <-
+grep("csv",
+     getHTMLLinks(
+       getURL(
+         "http://dados.prefeitura.sp.gov.br/dataset/dados-do-sp156", 
+         ssl.verifypeer = FALSE)
+     )
+     ,value=TRUE)
+
+link <- 
+grep(paste0(semestre,"o"), links,value=TRUE) %>%
+grep(ano,.,value=TRUE)
+```
+
+
+```{r download data}
+semestre = "1"
+ano = "2018"
+
+if(!file.exists(
+  paste0(script_dir,"/dados-do-sp156---",semestre,"o-tri-",ano,".csv")
+  )){
+      download.file(link,
+                    paste0(script_dir,"/dados-do-sp156---",semestre,"o-tri-",ano,".csv"))
+}
+
+```
+
+```{r carrega dados}
+SP156 <- 
+  as.data.frame(
+    read.csv2(
+      paste0(script_dir,"/dados-do-sp156---",semestre,"o-tri-",ano,".csv"),
+ sep=",",
+      na.strings=c("NA","NaN", " ",""),
+      fileEncoding = "UTF-8")
+    )
+
+```
+
+
+```{r tidy data}
+#Filtra non NA, Seleciona dados, seleciona duplicidades
+casos_dup <-
+  SP156[!is.na(SP156$Longitude),] %>% 
+  select(Serviço, Logradouro,Número,Longitude,Latitude) %>% 
+  add_count(Logradouro,Número) %>%  
+  filter(n > 1) %>% 
+  unique()
+
+```
+
+
+```{r covert to geo}
+#Carrega mapa da cidade
+mapa_cidade <- sf::st_read(paste0(script_dir,"/DEINFO_SUBPREFEITURAS_2013.shp")) %>% st_set_crs(5533) %>%  st_transform(4326) 
+
+#Carrega Pontos dos casos
+pontos_sf <- st_as_sf(casos_dup, coords = c( 'Longitude','Latitude'), crs = st_crs(mapa_cidade)) %>%  st_transform(4326)
+
+#pega a intersecção dos pontos em coordenada geometrica e do mapa
+casos <-  pontos_sf %>% mutate(
+  intersection = as.integer(st_intersects(geometry, mapa_cidade))
+     , COD_SUB = if_else(is.na(intersection)
+     , ''
+     , mapa_cidade$COD_SUB[intersection])
+)
+```
+
+
+```{r count cases}
+
+#Conta os casos em duplicidade
+casos_by_mapa_cidade <- 
+    casos %>%  as.data.frame() %>% 
+    filter(!COD_SUB == '') %>%
+    #seleciona 
+    select(n,COD_SUB) %>% 
+    #soma
+    aggregate( . ~ COD_SUB, .,FUN = sum )
+
+#Junta o mapa com os numeros de casos
+x<- merge(mapa_cidade,casos_by_mapa_cidade,by.x="COD_SUBPRE" ,by.y = "COD_SUB",all = TRUE)
+
+
+```
+
+
+```{r plots}
+
+
+  #Cria mapa de densidade
+# 
+# ggplot(mapa_cidade) +
+#   geom_sf(data=mapa_cidade) +
+#  geom_density2d(data=casos_dup,aes(x=Longitude,y=Latitude), bins=30) #+
+#  stat_density2d(data=casos_dup,aes(x=Longitude,y=Latitude,fill=..level..,alpha=..level..), geom='polygon') 
+
+# #####################
+# #Plota pontos em sobreposição
+# ggplot(mapa_cidade) +
+#   geom_point(data = casos_dup, aes(x = Longitude, y = Latitude),alpha=.01,size=.1)+
+#   geom_sf(data=mapa_cidade) 
+#   #geom_point(data = casos_cal_dup, aes(x = Longitude, y = Latitude))
+
+  ggplot(x) +
+    geom_sf(data=x,color="transparent", aes(fill=n,colour = white))+
+    geom_sf(color="black",data=mapa_cidade, fill="transparent")+
+    scale_fill_gradient(low = "blue", high = "red")
+#   scale_fill_gradient(low = "gray", high = "red")
+#   scale_fill_viridis(option="magma")  
+
+```
+
