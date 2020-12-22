@@ -5,7 +5,12 @@ editor_options:
   chunk_output_type: console
 ---
 
-  
+```{r include = FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+```
+
 ```{r library}
 
 #remotes::install_github("omegahat/RTidyHTML")
@@ -16,6 +21,8 @@ library(viridis)
 library(RCurl)
 library(RTidyHTML)
 library(XML)
+library(uchardet)
+
 ```
 
 ```{r pega diretorio local}
@@ -60,13 +67,17 @@ if(!file.exists(
 ```
 
 ```{r carrega dados}
+file <- paste0(script_dir,"/dados-do-sp156---",semestre,"o-tri-",ano,".csv")
+
+encode <- uchardet::detect_file_enc(file)
+
 SP156 <- 
   as.data.frame(
     read.csv2(
-      paste0(script_dir,"/dados-do-sp156---",semestre,"o-tri-",ano,".csv"),
+    file,
  sep=",",
       na.strings=c("NA","NaN", " ",""),
-      fileEncoding = "UTF-8")
+      fileEncoding = encode)
     )
 
 ```
@@ -86,7 +97,7 @@ casos_dup <-
 
 ```{r covert to geo}
 #Carrega mapa da cidade
-mapa_cidade <- sf::st_read(paste0(script_dir,"/DEINFO_SUBPREFEITURAS_2013.shp")) %>% st_set_crs(5533) %>%  st_transform(4326) 
+mapa_cidade <- sf::st_read(paste0(script_dir,"/MAPA/DEINFO_SUBPREFEITURAS_2013.shp")) %>% st_set_crs(5533) %>%  st_transform(4326) 
 
 #Carrega Pontos dos casos
 pontos_sf <- st_as_sf(casos_dup, coords = c( 'Longitude','Latitude'), crs = st_crs(mapa_cidade)) %>%  st_transform(4326)
@@ -99,7 +110,6 @@ casos <-  pontos_sf %>% mutate(
      , mapa_cidade$COD_SUB[intersection])
 )
 ```
-
 
 ```{r count cases}
 
