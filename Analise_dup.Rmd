@@ -1,6 +1,10 @@
 ---
-title: "Analise de duplicidade dos dados SP156"
-output: html_notebook
+title: "Analise de dados SP156"
+author: "Vitor Veloso"
+date: "24/09/2020"
+output:
+  html_document:
+    code_folding: hide
 editor_options: 
   chunk_output_type: console
 ---
@@ -33,8 +37,8 @@ script_dir = dirname(rstudioapi::getActiveDocumentContext()$path)
 
 
 ```{r set target data}
-semestre = "2"
-ano = "2019"
+semestre = "1"
+ano = "2020"
 ```
 
 ```{r download targets}
@@ -50,24 +54,24 @@ grep("csv",
 link <- 
 grep(paste0(semestre,"o"), links,value=TRUE) %>%
 grep(ano,.,value=TRUE)
+
+rm(links)
 ```
 
 
 ```{r download data}
-semestre = "1"
-ano = "2018"
 
 if(!file.exists(
-  paste0(script_dir,"/dados-do-sp156---",semestre,"o-tri-",ano,".csv")
+  paste0(script_dir,"/dados-do-sp156---",semestre,"o-sem-",ano,".csv")
   )){
       download.file(link,
-                    paste0(script_dir,"/dados-do-sp156---",semestre,"o-tri-",ano,".csv"))
+                    paste0(script_dir,"/dados-do-sp156---",semestre,"o-sem-",ano,".csv"))
 }
 
 ```
 
 ```{r carrega dados}
-file <- paste0(script_dir,"/dados-do-sp156---",semestre,"o-tri-",ano,".csv")
+file <- paste0(script_dir,"/dados-do-sp156---",semestre,"o-sem-",ano,".csv")
 
 encode <- uchardet::detect_file_enc(file)
 
@@ -83,53 +87,119 @@ SP156 <-
 ```
 
 
-```{r tidy data}
+```{r tidy data }
 #Filtra non NA, Seleciona dados, seleciona duplicidades
 casos_dup <-
-  SP156[!is.na(SP156$Longitude),] %>% 
-  select(Serviço, Logradouro,Número,Longitude,Latitude) %>% 
-  add_count(Logradouro,Número) %>%  
+  SP156[!is.na(SP156$Subprefeitura),] %>% 
+  select(Serviço,Assunto,Tema, Subprefeitura) %>% 
+  add_count(Subprefeitura) %>%  
   filter(n > 1) %>% 
   unique()
+
+
+colnames(SP156)
+
+##################################ANALISE
+###########################################
+#roda pelas colunas
+for(i in c("Assunto","Serviço","Tema")){
+tmp <-
+#executa a string como comando
+  eval(
+    parse(
+      text=
+      #o comando
+        paste0("unique(SP156$",paste(i),")")
+      )
+    )
+
+print(i)
+print(tmp)
+}
+
+
+########################################
+##########################################
 
 ```
 
 
 ```{r covert to geo}
 #Carrega mapa da cidade
-mapa_cidade <- sf::st_read(paste0(script_dir,"/MAPA/DEINFO_SUBPREFEITURAS_2013.shp")) %>% st_set_crs(5533) %>%  st_transform(4326) 
+mapa_cidade <- 
+  sf::st_read(paste0(script_dir,"/MAPA/DEINFO_SUBPREFEITURAS_2013.shp")) %>%
+  st_set_crs(5533) %>%  
+  st_transform(4326) 
 
-#Carrega Pontos dos casos
-pontos_sf <- st_as_sf(casos_dup, coords = c( 'Longitude','Latitude'), crs = st_crs(mapa_cidade)) %>%  st_transform(4326)
-
-#pega a intersecção dos pontos em coordenada geometrica e do mapa
-casos <-  pontos_sf %>% mutate(
-  intersection = as.integer(st_intersects(geometry, mapa_cidade))
-     , COD_SUB = if_else(is.na(intersection)
-     , ''
-     , mapa_cidade$COD_SUB[intersection])
+nome_cod_subs <-
+  as.data.frame(mapa_cidade) %>%
+  select(NOME,COD_SUBPRE) %>%
+  mutate(
+  NOME=gsub('PIRITUBA', 'PIRITUBA-JARAGUA', NOME),
+  NOME=gsub('ARICANDUVA','ARICANDUVA-FORMOSA-CARRAO', NOME),
+  NOME=gsub('GUAIANAZES','GUAIANASES', NOME),
 )
+
+test_row_num <- nrow(casos_dup)
+
+casos_dup <- merge(casos_dup,nome_cod_subs,by.x="Subprefeitura",by.y="NOME"  ,  keep = TRUE)
+
+if(nrow(casos_dup) == !test_row_num){
+  PLEASE_STOP <- "ALGO ESTÁ ERRADO POR FAVOR CORRIJA, NUMERO DE LINHAS NÃO BATE"
+  print(PLEASE_STOP)
+  }
+
+# unique(x$COD_SUBPRE)
+# colnames(casos_dup)
+
+
+##########################PAREI AQUI
+##########################PAREI AQUI
+##########################PAREI AQUI
+##########################PAREI AQUI
+##########################PAREI AQUI
+
+x<- merge(mapa_cidade,casos_dup,by.x="COD_SUBPRE" ,by.y = "COD_SUBPRE",all = TRUE)
+
+
+
+####UTIL DEMAIS, ACHEI AS SUBS RENOMEADAS, diferenças
+#setdiff(nome_cod_subs, x)
+
+####################3
+#PIRITUBA |PIRITUBA-JARAGUA
+#ARICANDUVA |ARICANDUVA-FORMOSA-CARRAO
+#GUAIANAZES | GUAIANASES
+##################
+#colnames(mapa_cidade)
+# #pega a intersecção dos pontos em coordenada geometrica e do mapa
+# casos <-  pontos_sf %>% mutate(
+#   intersection = as.integer(st_intersects(geometry, mapa_cidade))
+#      , COD_SUB = if_else(is.na(intersection)
+#      , ''
+#      , mapa_cidade$COD_SUB[intersection])
+# )
 ```
 
-```{r count cases}
-
-#Conta os casos em duplicidade
-casos_by_mapa_cidade <- 
-    casos %>%  as.data.frame() %>% 
-    filter(!COD_SUB == '') %>%
-    #seleciona 
-    select(n,COD_SUB) %>% 
-    #soma
-    aggregate( . ~ COD_SUB, .,FUN = sum )
-
-#Junta o mapa com os numeros de casos
-x<- merge(mapa_cidade,casos_by_mapa_cidade,by.x="COD_SUBPRE" ,by.y = "COD_SUB",all = TRUE)
-
+```{r count cases geo}
+# 
+# #Conta os casos em duplicidade
+# casos_by_mapa_cidade <- 
+#     casos %>%  as.data.frame() %>% 
+#     filter(!COD_SUB == '') %>%
+#     #seleciona 
+#     select(n,COD_SUB) %>% 
+#     #soma
+#     aggregate( . ~ COD_SUB, .,FUN = sum )
+# 
+# #Junta o mapa com os numeros de casos
+# x<- merge(mapa_cidade,casos_by_mapa_cidade,by.x="COD_SUBPRE" ,by.y = "COD_SUB",all = TRUE)
+# 
 
 ```
 
 
-```{r plots}
+```{r plots geo}
 
 
   #Cria mapa de densidade
