@@ -1,0 +1,219 @@
+---
+title: "Analise de duplicidade dos dados SP156"
+author: "Vitor Veloso"
+date: "24/09/2020"
+output:
+  html_document:
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r include = FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+knitr::opts_chunk$set(message=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+```
+
+```{r library}
+
+#remotes::install_github("omegahat/RTidyHTML")
+
+library(tidyverse)
+library(sf)
+library(viridis)
+library(RCurl)
+library(RTidyHTML)
+library(XML)
+library(uchardet)
+
+```
+
+```{r get local dir}
+script_dir = dirname(rstudioapi::getActiveDocumentContext()$path)
+```
+
+
+```{r set target data}
+semestre = "1"
+ano = "2020"
+```
+
+```{r download targets}
+links <-
+  grep("csv",
+       getHTMLLinks(
+         getURL(
+           "http://dados.prefeitura.sp.gov.br/dataset/dados-do-sp156",
+           ssl.verifypeer = FALSE
+         )
+       )
+       , value = TRUE)
+
+link <-
+  grep(paste0(semestre, "o"), links, value = TRUE) %>%
+  grep(ano, ., value = TRUE)
+
+rm(links)
+```
+
+
+```{r download data}
+
+if(!file.exists(paste0(
+  script_dir,
+  "/dados-do-sp156---",
+  semestre,
+  "o-sem-",
+  ano,
+  ".csv"
+))) {
+  download.file(link,
+                paste0(
+                  script_dir,
+                  "/dados-do-sp156---",
+                  semestre,
+                  "o-sem-",
+                  ano,
+                  ".csv"
+                ))
+}
+
+```
+
+```{r load data}
+file <-
+  paste0(script_dir,
+         "/dados-do-sp156---",
+         semestre,
+         "o-sem-",
+         ano,
+         ".csv")
+
+encode <- uchardet::detect_file_enc(file)
+
+SP156 <-
+  as.data.frame(read.csv2(
+    file,
+    sep = ",",
+    na.strings = c("NA", "NaN", " ", ""),
+    fileEncoding = encode
+  ))
+
+```
+
+
+```{r tidy data geo}
+#Filtra non NA, Seleciona dados, seleciona duplicidades
+casos_dup_geo <-
+  SP156[!is.na(SP156$Longitude), ] %>%
+  select(Serviço, Longitude, Latitude) %>%
+  group_by(Serviço) %>%
+  add_count(Longitude) %>%
+  filter(n > 1) %>%
+  unique()
+
+```
+
+
+```{r covert to geo}
+#Carrega mapa da cidade
+mapa_cidade <-
+  sf::st_read(paste0(script_dir, "/MAPA/DEINFO_SUBPREFEITURAS_2013.shp")) %>%
+  st_set_crs(5533) %>%
+  st_transform(4326)
+
+#Carrega Pontos dos casos
+pontos_sf <-
+  st_as_sf(
+    casos_dup_geo,
+    coords = c('Longitude', 'Latitude'),
+    crs = st_crs(mapa_cidade)
+  ) %>%  st_transform(4326)
+
+#pega a intersecção dos pontos em coordenada geometrica e do mapa
+pontos_sf <-  pontos_sf %>%
+  mutate(
+    intersection = as.integer(st_intersects(geometry, mapa_cidade$geometry))
+    ,
+    COD_SUB = if_else(is.na(intersection)
+                      , ''
+                      , mapa_cidade$COD_SUB[intersection])
+  )
+
+#st_intersects(st_sfc(pontos_sf$geometry,crs = 4326) ,st_sfc(mapa_cidade$geometry,crs = 4326))
+
+######VERIFICANDO PARA MESCLAR DADOS
+######VERIFICANDO PARA MESCLAR DADOS
+######VERIFICANDO PARA MESCLAR DADOS
+######VERIFICANDO PARA MESCLAR DADOS
+######VERIFICANDO PARA MESCLAR DADOS
+######VERIFICANDO PARA MESCLAR DADOS
+#setdiff(casos_dup_geo,pontos_sf)
+
+
+```
+
+```{r count cases geo}
+#Conta os casos em duplicidade
+casos_by_mapa_cidade <-
+  pontos_sf %>%
+  as.data.frame() %>%
+  filter(!COD_SUB == '') %>%
+  #seleciona
+  select(n, COD_SUB) %>%
+  #soma
+  aggregate(. ~ COD_SUB, ., FUN = sum)
+
+#Junta o mapa com os numeros de casos
+mapa_cidade <-
+  merge(
+    mapa_cidade,
+    casos_by_mapa_cidade,
+    by.x = "COD_SUBPRE" ,
+    by.y = "COD_SUB",
+    all = TRUE
+  )
+
+
+```
+
+```{r create x y coords and merge}
+pontos_sf <-
+  pontos_sf %>%
+  cbind(., st_coordinates(pontos_sf))
+```
+
+
+```{r plots geo}
+#DENSIDADE
+ggplot(mapa_cidade) +
+  geom_sf(data = mapa_cidade) +
+  geom_density2d(data = pontos_sf, aes(X, Y, alpha = ..level..), bins =
+                   30) #+
+
+#DENSIDADE 2
+ggplot() +
+  geom_sf(data = mapa_cidade) +
+  stat_density_2d(data = pontos_sf, aes(X, Y))
+
+
+#PONTOS
+ggplot() +
+  geom_sf(data = mapa_cidade) +
+  geom_sf(data = pontos_sf, alpha = .1, size = .1)
+
+
+#DENSIDADE POR SUBS
+ggplot(mapa_cidade) +
+  #Densidade pela cor
+  geom_sf(data = mapa_cidade, color = "transparent", aes(fill = n, colour = white)) +
+  #Linhas de divisão
+  geom_sf(color = "black", data = mapa_cidade, fill = "transparent") +
+  theme_void() +
+  scale_fill_gradient(low = "blue", high = "red", "Densidade por SUB")
+#scale_fill_gradient(low = "gray", high = "red")
+#scale_fill_viridis(option="magma")
+
+```
+
